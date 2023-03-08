@@ -98,12 +98,6 @@ static apr_status_t get_dir_used_bytes_walk(request_rec *r,
             break;
 
         case APR_DIR:
-            if ((finfo.valid & APR_FINFO_NAME) == 0) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                              "Cannot get entry name in \"%s\"", path);
-                goto out;
-            }
-
             rv = apr_filepath_merge(&newpath, path, finfo.name, 0, r->pool);
             if (rv != APR_SUCCESS) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
@@ -326,12 +320,20 @@ int dav_fs_quota_precondition(request_rec *r,
         /*
          * If PUT has Content-Length, we can forecast overquota
          */
-        if ((lenhdr = apr_table_get(r->headers_in, "Content-Length")) &&
-            (atol(lenhdr) > available_bytes)) {
-            status = HTTP_INSUFFICIENT_STORAGE;
-            *err = dav_new_error_tag(r->pool, status, 0, 0,
-                                     msg, NULL, tag);
-            goto out;
+        if ((lenhdr = apr_table_get(r->headers_in, "Content-Length"))) {
+            if (!ap_parse_strict_length(&size, lenhdr)) {
+                status = HTTP_BAD_REQUEST;
+                *err = dav_new_error(r->pool, status, 0, 0,
+                                     "client sent invalid Content-Length");
+                goto out;
+            }
+
+            if (size > available_bytes) {
+                status = HTTP_INSUFFICIENT_STORAGE;
+                *err = dav_new_error_tag(r->pool, status, 0, 0,
+                                         msg, NULL, tag);
+                goto out;
+            }
         }
         break;
     case M_COPY: /* FALLTHROUGH */
