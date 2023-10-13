@@ -384,14 +384,40 @@ apr_status_t h2_mplx_c1_streams_do(h2_mplx *m, h2_mplx_stream_cb *cb, void *ctx)
 {
     stream_iter_ctx_t x;
     
-    H2_MPLX_ENTER(m);
-
     x.cb = cb;
     x.ctx = ctx;
+
+    H2_MPLX_ENTER(m);
+
     h2_ihash_iter(m->streams, m_stream_iter_wrap, &x);
         
     H2_MPLX_LEAVE(m);
     return APR_SUCCESS;
+}
+
+typedef struct {
+    int stream_count;
+    int stream_want_send;
+} stream_iter_aws_t;
+
+static int m_stream_want_send_data(void *ctx, void *stream)
+{
+    stream_iter_aws_t *x = ctx;
+    ++x->stream_count;
+    if (h2_stream_wants_send_data(stream))
+      ++x->stream_want_send;
+    return 1;
+}
+
+int h2_mplx_c1_all_streams_want_send_data(h2_mplx *m)
+{
+    stream_iter_aws_t x;
+    x.stream_count = 0;
+    x.stream_want_send = 0;
+    H2_MPLX_ENTER(m);
+    h2_ihash_iter(m->streams, m_stream_want_send_data, &x);
+    H2_MPLX_LEAVE(m);
+    return x.stream_count && (x.stream_count == x.stream_want_send);
 }
 
 static int m_report_stream_iter(void *ctx, void *val) {
@@ -828,6 +854,8 @@ static apr_status_t c2_setup_io(h2_mplx *m, conn_rec *c2, h2_stream *stream, h2_
         if (APR_SUCCESS != rv) goto cleanup;
 #endif
         h2_beam_on_eagain(stream->input, c2_beam_input_read_eagain, c2);
+        if (!h2_beam_empty(stream->input))
+            c2_beam_input_write_notify(c2, stream->input);
     }
 
 cleanup:
